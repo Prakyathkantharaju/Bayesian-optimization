@@ -1,9 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import sklearn
+import warnings
 
 # Bayesian Optimization
-from bayes_opt import UtilityFunction
+from bayes_opt.util import UtilityFunction, acq_max, ensure_rng
 
 
 # Create a Bayesian Optimization class
@@ -11,7 +12,7 @@ class BayesianOptimization(object):
     """
     Bayesian Optimization class
     """
-    def __init__(self, f, bounds, x0, kernel = None, random_state=None, acq='ucb', kappa=2.576, xi=0.0, **kwargs):
+    def __init__(self, f, bounds, x0, kernel = None, random_state=None, acq='ucb', kappa=2.576, xi=0.001, **kwargs):
         """
         :param f:
             Function to be optimized.
@@ -33,13 +34,13 @@ class BayesianOptimization(object):
         self.f = f
         self.bounds = bounds
         self.x0 = x0
-        self.random_state = random_state
+        self.random_state = ensure_rng(random_state)
 
         # expolaration exploitation trade-off
         self.kappa = kappa
 
         # Initialize acquisition function
-        if acq not in ['ucb', 'ei', 'poi', 'gp']:
+        if acq not in ['ucb', 'ei', 'poi']:
             raise ValueError('Invalid acquisition function.')
         else:
             self.acq = acq
@@ -55,6 +56,8 @@ class BayesianOptimization(object):
         self.gp = sklearn.gaussian_process.GaussianProcessRegressor(kernel=self.kernel, alpha=0.0, n_restarts_optimizer=10)
 
 
+        # Initialize utility function
+        self.utility = UtilityFunction(kind=self.acq, kappa=self.kappa, xi=xi)
 
         # Constants
         self.START = False
@@ -68,27 +71,74 @@ class BayesianOptimization(object):
         """
         First step of the optimization.
         """
-        for i in len(x0):
-            y = self.f(x0)
-            self.X.append(x0)
+        for i in range(len(self.x0)):
+            y = self.f(self.x0)
+            self.X.append(self.x0)
             self.Y.append(y)
-        self.gp.fit(self.X, self.y)
+            # Update the GP
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.gp.fit(self.X, self.Y)
+        self.utility.update_params()
+        return acq_max(self.utility.utility, self.gp, max(self.Y), self.bounds, self.random_state)
 
 
 
 
-    def step(self):
+    def simulate_steps(self, n = 10):
         """
-        One step of the optimization.
+        Simulate n steps of the optimization.
         """
         # Sample next point
 
-        if self.START is False:
+        for i in range(n):
 
-        else:
-            self.
-        self.gp.fit(self.X, self.Y)
+            # First iteration
+            if self.START is False:
+                self.START = True
+                next_x = self._first_step()
+                self.X.append(next_x)
+                self.Y.append(self.f(next_x))
 
+            # Update utility function
+            self.utility.update_params()
+
+            # Obtain next best sample
+            x_max = acq_max(self.utility.utility, self.gp, max(self.Y), self.bounds, self.random_state)
+
+            # Add to X and Y arrays
+            self.X.append(x_max)
+            self.Y.append(self.f(x_max))
+
+            # Update the GP
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.gp.fit(self.X, self.Y)
+
+
+        return (self.X, self.Y)
+
+
+
+if __name__ == '__main__':
+
+    # Define the objective function
+    def objective(x):
+        return x[0]**2 + x[1]**2
+
+    # Define the bounds
+    bounds = np.array([[-5, 5], [-5, 5]])
+
+    # Initialize the optimizer
+    optimizer = BayesianOptimization(objective, bounds, x0 = [3, -3])
+
+    # Simulate the optimization process
+    X, Y = optimizer.simulate_steps(n = 10)
+
+    # Plot the results
+    plt.plot(X, Y)
+    print(*list(zip(X,Y)), sep = '\n')
+    plt.show()
 
 
 
